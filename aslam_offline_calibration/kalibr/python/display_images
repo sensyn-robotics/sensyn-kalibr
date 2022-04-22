@@ -1,0 +1,190 @@
+#!/usr/bin/env python
+print "importing libraries"
+import rosbag
+import cv_bridge
+
+import sm
+from sm import PlotCollection
+import aslam_cv as acv
+import aslam_cameras_april as acv_april
+import aslam_cv_backend as acvb
+import kalibr_common as kc
+import kalibr_camera_calibration as kcc
+
+import cv2
+import os
+import numpy as np
+import pylab as pl
+import argparse
+import sys
+import random
+import signal
+
+np.set_printoptions(suppress=True)
+
+def initBagDataset(bagfile, topic, from_to):
+    print "\tDataset:          {0}".format(bagfile)
+    print "\tTopic:            {0}".format(topic)
+    reader = kc.BagImageDatasetReader(bagfile, topic, bag_from_to=from_to)
+    print "\tNumber of images: {0}".format(reader.numImages())
+    return reader
+
+#available models
+cameraModels = { 'pinhole-radtan': acvb.DistortedPinhole,
+                 'pinhole-equi':   acvb.EquidistantPinhole,
+                 'pinhole-fov':    acvb.FovPinhole,
+                 'omni-none':      acvb.Omni,
+                 'omni-radtan':    acvb.DistortedOmni,
+                 'eucm-none':      acvb.ExtendedUnified,
+                 'ds-none':        acvb.DoubleSphere}
+
+def signal_exit(signal, frame):
+    sm.logWarn("Shutdown requested! (CTRL+C)")
+    sys.exit(2)
+
+def parseArgs():
+    class KalibrArgParser(argparse.ArgumentParser):
+        def error(self, message):
+            self.print_help()
+            sm.logError('%s' % message)
+            sys.exit(2)
+        def format_help(self):
+            formatter = self._get_formatter()
+            formatter.add_text(self.description)
+            formatter.add_usage(self.usage, self._actions,
+                                self._mutually_exclusive_groups)
+            for action_group in self._action_groups:
+                formatter.start_section(action_group.title)
+                formatter.add_text(action_group.description)
+                formatter.add_arguments(action_group._group_actions)
+                formatter.end_section()
+            formatter.add_text(self.epilog)
+            return formatter.format_help()     
+        
+    usage = """
+    Example usage to calibrate a camera system with two cameras using an aprilgrid. 
+    
+    cam0: omnidirection model with radial-tangential distortion
+    cam1: pinhole model with equidistant distortion
+    
+    %(prog)s --models omni-radtan pinhole-equi --target aprilgrid.yaml \\
+              --bag MYROSBAG.bag --topics /cam0/image_raw /cam1/image_raw
+    
+    example aprilgrid.yaml:
+        target_type: 'aprilgrid'
+        tagCols: 6
+        tagRows: 6
+        tagSize: 0.088  #m
+        tagSpacing: 0.3 #percent of tagSize"""
+            
+    parser = KalibrArgParser(description='Calibrate the intrinsics and extrinsics of a camera system with non-shared overlapping field of view.', usage=usage)
+    parser.add_argument('--models', nargs='+', dest='models', help='The camera model {0} to estimate'.format(cameraModels.keys()), required=True)
+    
+    groupSource = parser.add_argument_group('Data source')
+    groupSource.add_argument('--bag', dest='bagfile', help='The bag file with the data')
+    groupSource.add_argument('--topics', nargs='+', dest='topics', help='The list of image topics', required=True)
+    groupSource.add_argument('--bag-from-to', metavar='bag_from_to', type=float, nargs=2, help='Use the bag data starting from up to this time [s]')
+    
+    groupTarget = parser.add_argument_group('Calibration target configuration')
+    groupTarget.add_argument('--target', dest='targetYaml', help='Calibration target configuration as yaml file', required=True)
+    
+    groupTarget = parser.add_argument_group('Image synchronization')
+    groupTarget.add_argument('--approx-sync', dest='max_delta_approxsync', type=float, default=0.02, help='Time tolerance for approximate image synchronization [s] (default: %(default)s)')
+    
+    groupCalibrator = parser.add_argument_group('Calibrator settings')
+    groupCalibrator.add_argument('--qr-tol', type=float, default=0.02, dest='qrTol', help='The tolerance on the factors of the QR decomposition (default: %(default)s)')
+    groupCalibrator.add_argument('--mi-tol', type=float, default=0.2, dest='miTol', help='The tolerance on the mutual information for adding an image. Higher means fewer images will be added. Use -1 to force all images. (default: %(default)s)')
+    groupCalibrator.add_argument('--no-shuffle', action='store_true', dest='noShuffle', help='Do not shuffle the dataset processing order')
+    
+    outlierSettings = parser.add_argument_group('Outlier filtering options')
+    outlierSettings.add_argument('--no-outliers-removal', action='store_false', default=True, dest='removeOutliers', help='Disable corner outlier filtering')
+    outlierSettings.add_argument('--no-final-filtering', action='store_false', default=True, dest='allowEndFiltering', help='Disable filtering after all views have been processed.')
+    outlierSettings.add_argument('--min-views-outlier', type=int, default=20, dest='minViewOutlier', help='Number of raw views to initialize statistics (default: %(default)s)')
+    outlierSettings.add_argument('--use-blakezisserman', action='store_true', dest='doBlakeZisserman', help='Enable the Blake-Zisserman m-estimator')
+    outlierSettings.add_argument('--plot-outliers', action='store_true', dest='doPlotOutliers', help='Plot the detect outliers during extraction (this could be slow)')
+    
+    outputSettings = parser.add_argument_group('Output options')
+    outputSettings.add_argument('--verbose', action='store_true', dest='verbose', help='Enable (really) verbose output (disables plots)')
+    outputSettings.add_argument('--show-extraction', action='store_true', dest='showextraction', help='Show the calibration target extraction. (disables plots)')
+    outputSettings.add_argument('--plot', action='store_true', dest='plot', help='Plot during calibration (this could be slow).')
+    outputSettings.add_argument('--dont-show-report', action='store_true', dest='dontShowReport', help='Do not show the report on screen after calibration.')
+       
+    #print help if no argument is specified
+    if len(sys.argv)==1:
+        parser.print_help()
+        sys.exit(2)
+        
+    #Parser the argument list
+    try:
+        parsed = parser.parse_args()
+    except:
+        sys.exit(2)
+    
+    #some checks
+    if len(parsed.topics) != len(parsed.models):
+        sm.logError("Please specify exactly one camera model (--models) for each topic (--topics).")
+        sys.exit(2)
+        
+    if parsed.minViewOutlier<1:
+        sm.logError("Please specify a positive integer (--min-views-outlier).")
+        sys.exit(2)
+    
+    #there is a with the gtk plot widget, so we cant plot if we have opencv windows open...
+    #--> disable the plots in these special situations
+    if parsed.showextraction or parsed.verbose:
+        parsed.dontShowReport = True
+    
+    return parsed
+
+
+def main():
+    parsed = parseArgs()
+
+    #register signal handler
+    signal.signal(signal.SIGINT, signal_exit)
+
+    targetConfig = kc.CalibrationTargetParameters(parsed.targetYaml)
+
+    #create camera objects, initialize the intrinsics and extract targets
+    cameraList = list()
+    numCams = len(parsed.topics)
+
+    obsdb = kcc.ObservationDatabase(parsed.max_delta_approxsync)
+        
+    for cam_id in range(0, numCams):
+        topic = parsed.topics[cam_id]
+        modelName = parsed.models[cam_id]
+        print "Initializing cam{0}:".format(cam_id)
+        print "\tCamera model:\t  {0}".format(modelName)
+
+        if modelName in cameraModels:
+            #open dataset 
+            dataset = initBagDataset(parsed.bagfile, topic, parsed.bag_from_to)
+        
+            #create camera
+            cameraModel = cameraModels[modelName]
+            cam = kcc.CameraGeometry(cameraModel, targetConfig, dataset, verbose=(parsed.verbose or parsed.showextraction))
+
+            # debug
+            for timestamp, image in dataset.readDataset():
+                cv2.imshow("test", image)
+                cv2.waitKey(1)
+            #
+            # #extract the targets
+            # multithreading = not (parsed.verbose or parsed.showextraction)
+            # observations = kc.extractCornersFromDataset(cam.dataset, cam.ctarget.detector,
+            #                                             multithreading=multithreading, clearImages=False,
+            #                                             noTransformation=True)
+            #
+            # cameraList.append(cam)
+
+
+        else:
+            raise RuntimeError( "Unknown camera model: {0}. Try {1}.".format(modelName, cameraModels.keys()) )
+
+    if parsed.verbose:
+        obsdb.printTable()
+
+if __name__ == "__main__":
+    main()
+
