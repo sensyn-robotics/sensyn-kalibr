@@ -106,6 +106,8 @@ class CameraChainValidator(object):
         #initialize message throttler
         self.timeLast = 0
 
+        self.stereo = cv2.StereoBM_create(numDisparities=16, blockSize=15)
+
     def synchronizedCallback(self, *cam_msgs):
         #throttle image processing
         rate = 2 #Hz
@@ -152,8 +154,10 @@ class CameraChainValidator(object):
             cidx_dest = edge.target
             rectimgA, rectimgB = self.generatePairView(cidx_src, cidx_dest)
 
-        self.estimateDepth(rectimgA, rectimgB)
-                
+        # self.estimateDepth(rectimgA, rectimgB)
+        cv2.imwrite("rectimgA.png", rectimgA)
+        cv2.imwrite("rectimgB.png", rectimgB)
+
         cv2.waitKey(1)
     
     #returns transformation T_to_from
@@ -368,19 +372,16 @@ class CameraChainValidator(object):
         
         return (rect_map_x_a, rect_map_y_a), (rect_map_x_b, rect_map_y_b), Ra, Rb, A, A
 
-    def estimateDepth(self, imageA, imageB):
-        # cv2.imshow("rectimgA", imageA)
-        # cv2.imshow("rectimgB", imageB)
+    def estimateDepth(self, imageA, imageB, roi=[512,320,256,160]): # default assumes 2:1:2 center of 1280x800 image.
+        # compute disparity
+        disparity = self.stereo.compute(imageA, imageB)
 
-        stereo = cv2.StereoBM_create(numDisparities=16, blockSize=15)
-        disparity = stereo.compute(imageA, imageB)
-
-        #display
+        # display
         disparity = disparity.astype(np.float32)
-        disparity = (disparity - stereo.getMinDisparity()) / stereo.getNumDisparities()
+        disparity = (disparity - self.stereo.getMinDisparity()) / self.stereo.getNumDisparities()
         cv2.imshow("disparity", disparity)
-    
-        
+
+
 class MonoCameraValidator(object):
     def __init__(self, camConfig, targetParams):
         

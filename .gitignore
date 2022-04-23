@@ -41,6 +41,7 @@ CMakeLists.txt.user
 *.csv
 *.asv
 *.jpg
+*.ply
 
 # MacOS Desktop Services Store
 .DS_Store
