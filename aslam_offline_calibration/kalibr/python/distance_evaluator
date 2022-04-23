@@ -152,7 +152,7 @@ class CameraChainValidator(object):
             cidx_dest = edge.target
             rectimgA, rectimgB = self.generatePairView(cidx_src, cidx_dest)
 
-        estimateDepth(rectimgA, rectimgB)
+        self.estimateDepth(rectimgA, rectimgB)
                 
         cv2.waitKey(1)
     
@@ -189,24 +189,7 @@ class CameraChainValidator(object):
         #combine the images    
         np_rect_image = np.hstack( (rect_image_A, rect_image_B) )
         
-        return np_rect_image
-
-    def rectify2imgs(self, imageA, mapA, imageB, mapB):
-        # rectify images
-        rect_image_A = cv2.remap(imageA,
-                                 mapA[0],
-                                 mapA[1],
-                                 cv2.INTER_LINEAR)
-
-        rect_image_B = cv2.remap(imageB,
-                                 mapB[0],
-                                 mapB[1],
-                                 cv2.INTER_LINEAR)
-
-        # combine the images
-        np_rect_image = np.hstack((rect_image_A, rect_image_B))
-
-        return rect_image_A, rect_image_B
+        return np_rect_image, rect_image_A, rect_image_B
 
     def generatePairView(self, camAnr, camBnr):
         #prepare the window
@@ -267,7 +250,7 @@ class CameraChainValidator(object):
         edge = self.G.es[edge_idx]
         A_rect = edge["A"][camAnr] #some for cam B
         
-        np_image_rect = self.rectifyImages(camA.undist_image, 
+        np_image_rect, rectimgA, rectimgB = self.rectifyImages(camA.undist_image,
                                            edge["rect_map"][camAnr], 
                                            camB.undist_image, 
                                            edge["rect_map"][camBnr])
@@ -316,10 +299,7 @@ class CameraChainValidator(object):
         cv2.imshow(windowName, np_image_rect)
 
         # to return rectified image
-        return self.rectify2imgs(camA.undist_image,
-                                 edge["rect_map"][camAnr],
-                                 camB.undist_image,
-                                 edge["rect_map"][camBnr])
+        return rectimgA, rectimgB
     
     def prepareStereoRectificationMaps(self, camAnr, camBnr):        
         #get the camera parameters for the undistorted cameras
@@ -389,19 +369,22 @@ class CameraChainValidator(object):
         return (rect_map_x_a, rect_map_y_a), (rect_map_x_b, rect_map_y_b), Ra, Rb, A, A
 
     def estimateDepth(self, imageA, imageB):
-        stereo = cv2.StereoBM_create(numDisparities=16, blockSize=15)
-        disparity = stereo.compute(imageA, imageB)
+        cv2.imshow("rectimgA", imageA)
+        cv2.imshow("rectimgB", imageB)
 
-        # show depth estimation result
-        plt.figure(figsize=(13, 3))
-        plt.imshow(disparity)
-        plt.show()
-
-        # (show with colorbar)
-        plt.figure(figsize=(13, 3))
-        plt.imshow(disparity)
-        plt.colorbar()
-        plt.show()
+        # stereo = cv2.StereoBM_create(numDisparities=16, blockSize=15)
+        # disparity = stereo.compute(imageA, imageB)
+        #
+        # # show depth estimation result
+        # plt.figure(figsize=(13, 3))
+        # plt.imshow(disparity)
+        # plt.show()
+        #
+        # # (show with colorbar)
+        # plt.figure(figsize=(13, 3))
+        # plt.imshow(disparity)
+        # plt.colorbar()
+        # plt.show()
     
         
 class MonoCameraValidator(object):
