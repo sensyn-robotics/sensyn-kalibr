@@ -154,9 +154,9 @@ class CameraChainValidator(object):
             cidx_dest = edge.target
             rectimgA, rectimgB = self.generatePairView(cidx_src, cidx_dest)
 
-        # self.estimateDepth(rectimgA, rectimgB)
         cv2.imwrite("rectimgA.png", rectimgA)
         cv2.imwrite("rectimgB.png", rectimgB)
+        # self.estimateDepth(rectimgA, rectimgB)
 
         cv2.waitKey(1)
     

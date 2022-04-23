@@ -39,6 +39,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('left', default='rectimgA.png', help='left rectified image')
     parser.add_argument('right', default='rectimgB.png', help='right rectified image')
+    parser.add_argument('--roi', default='[512,320,256,160]', help='used for dumping 3d points')
     args = parser.parse_args()
 
     imgL = cv.pyrDown(cv.imread(args.left))  # downscale images for faster processing
@@ -62,6 +63,11 @@ def main():
     print('computing disparity...')
     disp = stereo.compute(imgL, imgR).astype(np.float32) / 16.0
 
+    # Select ROI
+    r = cv.selectROI(imgL)
+    # Crop image
+    cropped_disp = disp[int(r[1]):int(r[1]+r[3]), int(r[0]):int(r[0]+r[2])]
+
     print('generating 3d point cloud...',)
     h, w = imgL.shape[:2]
     f = 0.8*w                          # guess for focal length
@@ -69,11 +75,12 @@ def main():
                     [0,-1, 0,  0.5*h], # turn points 180 deg around x-axis,
                     [0, 0, 0,     -f], # so that y-axis looks up
                     [0, 0, 1,      0]])
-    points = cv.reprojectImageTo3D(disp, Q)
-    colors = cv.cvtColor(imgL, cv.COLOR_BGR2RGB)
-    mask = disp > disp.min()
+    points = cv.reprojectImageTo3D(cropped_disp, Q)
+    colors = cv.cvtColor(imgL[int(r[1]):int(r[1]+r[3]), int(r[0]):int(r[0]+r[2])], cv.COLOR_BGR2RGB)
+    mask = cropped_disp > cropped_disp.min()
     out_points = points[mask]
     out_colors = colors[mask]
+
     out_fn = 'out.ply'
     write_ply(out_fn, out_points, out_colors)
     print('%s saved' % out_fn)
