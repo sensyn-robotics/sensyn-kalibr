@@ -39,7 +39,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('left', default='rectimgA.png', help='left rectified image')
     parser.add_argument('right', default='rectimgB.png', help='right rectified image')
-    parser.add_argument('--roi', default='[512,320,256,160]', help='used for dumping 3d points')
     args = parser.parse_args()
 
     imgL = cv.pyrDown(cv.imread(args.left))  # downscale images for faster processing

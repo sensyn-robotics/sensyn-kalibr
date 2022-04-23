@@ -107,6 +107,8 @@ class CameraChainValidator(object):
         self.timeLast = 0
 
         self.stereo = cv2.StereoBM_create(numDisparities=16, blockSize=15)
+        self.roi = []
+        self.is_roiselected = False
 
     def synchronizedCallback(self, *cam_msgs):
         #throttle image processing
@@ -154,9 +156,13 @@ class CameraChainValidator(object):
             cidx_dest = edge.target
             rectimgA, rectimgB = self.generatePairView(cidx_src, cidx_dest)
 
-        cv2.imwrite("rectimgA.png", rectimgA)
-        cv2.imwrite("rectimgB.png", rectimgB)
-        # self.estimateDepth(rectimgA, rectimgB)
+        # cv2.imwrite("rectimgA.png", rectimgA)
+        # cv2.imwrite("rectimgB.png", rectimgB)
+        if self.is_roiselected:
+            self.estimateDepth(rectimgA, rectimgB)
+        else:
+            self.roi = cv2.selectROI(rectimgA)
+            self.is_roiselected = True
 
         cv2.waitKey(1)
     
