@@ -369,22 +369,16 @@ class CameraChainValidator(object):
         return (rect_map_x_a, rect_map_y_a), (rect_map_x_b, rect_map_y_b), Ra, Rb, A, A
 
     def estimateDepth(self, imageA, imageB):
-        cv2.imshow("rectimgA", imageA)
-        cv2.imshow("rectimgB", imageB)
+        # cv2.imshow("rectimgA", imageA)
+        # cv2.imshow("rectimgB", imageB)
 
-        # stereo = cv2.StereoBM_create(numDisparities=16, blockSize=15)
-        # disparity = stereo.compute(imageA, imageB)
-        #
-        # # show depth estimation result
-        # plt.figure(figsize=(13, 3))
-        # plt.imshow(disparity)
-        # plt.show()
-        #
-        # # (show with colorbar)
-        # plt.figure(figsize=(13, 3))
-        # plt.imshow(disparity)
-        # plt.colorbar()
-        # plt.show()
+        stereo = cv2.StereoBM_create(numDisparities=16, blockSize=15)
+        disparity = stereo.compute(imageA, imageB)
+
+        #display
+        disparity = disparity.astype(np.float32)
+        disparity = (disparity - stereo.getMinDisparity()) / stereo.getNumDisparities()
+        cv2.imshow("disparity", disparity)
     
         
 class MonoCameraValidator(object):
