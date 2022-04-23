@@ -113,8 +113,8 @@ class CameraChainValidator(object):
         self.fb = focal_length * baseline
         print("focal length={}".format(focal_length))
         print("baseline={}".format(baseline))
-        self.mindepth = -0.1 # ignore smaller depth than this. [m]
-        self.maxdepth = 1000 # ignore larger depth than this. [m]
+        self.mindepth = 0.01 # ignore smaller depth than this. [m]
+        self.maxdepth = 100 # ignore larger depth than this. [m]
 
     def synchronizedCallback(self, *cam_msgs):
         #throttle image processing
@@ -393,18 +393,15 @@ class CameraChainValidator(object):
         disparity = disparity[int(self.roi[1]):int(self.roi[1] + self.roi[3]),
                        int(self.roi[0]):int(self.roi[0] + self.roi[2])]
 
-        # # display
-        # disparity = (disparity - self.stereo.getMinDisparity()) / self.stereo.getNumDisparities()
-        # cv2.imshow("disparity", disparity)
-
         # compute depth
         depth = self.fb / disparity
 
         # remove errors
         depth[np.where(depth < self.mindepth)] = np.nan
         depth[np.where(depth > self.maxdepth)] = np.nan
-        print("mean depth in the ROI={}".format(np.nanmean(depth)))
 
+        # display
+        print("mean depth in the ROI={}".format(np.nanmean(depth)))
         cv2.imshow("depth", depth)
 
 
