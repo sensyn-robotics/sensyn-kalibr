@@ -111,8 +111,8 @@ class CameraChainValidator(object):
         self.is_roiselected = False
         focal_length = edge["A"][cidx_src][0,0] # Assume only 2 (overlapped) cameras as 1 stereo set.
         self.fb = focal_length * baseline
-        print("focal length={}".format(focal_length))
-        print("baseline={}".format(baseline))
+        print("focal length={}[pix]".format(focal_length))
+        print("baseline={}[m]".format(baseline))
         self.mindepth = 0.01 # ignore smaller depth than this. [m]
         self.maxdepth = 100 # ignore larger depth than this. [m]
 
@@ -153,8 +153,8 @@ class CameraChainValidator(object):
             else:
                 validator.undist_image = validator.undistorter.undistortImage(np_image)
                             
-            #generate a mono view for each cam
-            validator.generateMonoview(np_image, observation, success)            
+            # #generate a mono view for each cam
+            # validator.generateMonoview(np_image, observation, success)
             
         #generate all rectification views
         for edge in self.G.es:
@@ -278,8 +278,8 @@ class CameraChainValidator(object):
         for i in range(0,n):
             y = np_image_rect.shape[0]*i/n
             cv2.line(np_image_rect, (0,y), (2*np_image_rect.shape[1],y),(0,255,0));
-    
-    
+
+
         if len(common_ids) > 0:
             #draw error statistics
             reproj_L2_errs = np.sum(np.abs(reproj_errs)**2, axis=-2)**(1./2)
@@ -297,22 +297,22 @@ class CameraChainValidator(object):
                            ( "std_L2:  ", np.std(reproj_L2_errs) ),
                            ( "max_L2:  ", np.max(reproj_L2_errs) ),
                            ( "min_L2:  ", np.min(reproj_L2_errs) )      ]
-    
+
             #print the text
             y = 20; x = 20
             for err_txt, err_val in outputList:
                 fontScale = 0.75
                 y += int(42*fontScale)
-                 
+
                 if err_txt == "":
                     continue
-                 
+
                 cv2.putText(np_image_rect, err_txt, (x,y), cv2.FONT_HERSHEY_SIMPLEX, fontScale=fontScale, color=(0, 0, 255), thickness=2)
                 cv2.putText(np_image_rect, "{0: .4f}".format(err_val), (x+100,y), cv2.FONT_HERSHEY_SIMPLEX, fontScale=fontScale, color=(0, 0, 255), thickness=2)
         else:
- 
+
             cv2.putText(np_image_rect, "Detection failed...", (np_image_rect.shape[0]/2,np_image_rect.shape[1]/5), cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(0, 0, 255), thickness=3)
-            
+
         cv2.imshow(windowName, np_image_rect)
 
         return rectimgA, rectimgB
@@ -387,8 +387,8 @@ class CameraChainValidator(object):
     def estimateDepth(self, imageA, imageB): # default assumes 2:1:2 center of 1280x800 image.
         # compute disparity
         disparity = self.stereo.compute(imageA, imageB)
-        # disparity = disparity.astype(np.float32) / 16.0 # opencv outputs disparity floqt16 and multiply 16.
-        disparity = disparity.astype(np.float32)
+        disparity = disparity.astype(np.float32) / 16.0 # opencv outputs disparity floqt16 and multiply 16.
+        # disparity = disparity.astype(np.float32)
         # crop disparity
         disparity = disparity[int(self.roi[1]):int(self.roi[1] + self.roi[3]),
                        int(self.roi[0]):int(self.roi[0] + self.roi[2])]
@@ -401,7 +401,7 @@ class CameraChainValidator(object):
         depth[np.where(depth > self.maxdepth)] = np.nan
 
         # display
-        print("mean depth in the ROI={}".format(np.nanmean(depth)))
+        print("mean depth in the ROI={}[m]".format(np.nanmean(depth)))
         cv2.imshow("depth", depth)
 
 
@@ -418,7 +418,6 @@ class MonoCameraValidator(object):
         
         self.topic = camConfig.getRosTopic()
         self.windowName = "Camera: {0}".format(self.topic)
-        # cv2.namedWindow(self.windowName, 1)
     
         #register the cam topic to the message synchronizer
         self.image_sub = message_filters.Subscriber(self.topic, Image)
