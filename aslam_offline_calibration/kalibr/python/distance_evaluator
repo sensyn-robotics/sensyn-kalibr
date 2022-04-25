@@ -160,7 +160,7 @@ class CameraChainValidator(object):
         for edge in self.G.es:
             cidx_src = edge.source
             cidx_dest = edge.target
-            rectimgA, rectimgB = self.generatePairView(cidx_src, cidx_dest)
+            rectimgA, rectimgB = self.generatePairView(cidx_src, cidx_dest) #extract final
 
         # cv2.imwrite("rectimgA.png", rectimgA)
         # cv2.imwrite("rectimgB.png", rectimgB)
@@ -327,7 +327,8 @@ class CameraChainValidator(object):
         
         #get the baseline between the cams       
         baseline_BA = self.getTransformationCamFromTo(camAnr, camBnr)
-        
+        baseline = np.linalg.norm(baseline_BA.t())
+
         ##
         #A.Fusiello, E. Trucco, A. Verri: A compact algorithm for recification of stereo pairs, 1999
         ##
@@ -362,7 +363,6 @@ class CameraChainValidator(object):
         #rectyfing transforms
         Ta = Pna[0:3,0:3] * np.linalg.inv(Poa[0:3,0:3])
         Tb = Pnb[0:3,0:3] * np.linalg.inv(Pob[0:3,0:3])
-        baseline = abs(Tb[0,0])
         
         Ra = R #camA=world, then to rectified coords
         Rb = R * baseline_BA.inverse().C() #to world then to rectified coords
