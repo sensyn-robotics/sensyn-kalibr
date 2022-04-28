@@ -97,7 +97,7 @@ class CameraChainValidator(object):
             edge["R"][cidx_src], \
             edge["R"][cidx_dest], \
             edge["A"][cidx_src], \
-            edge["A"][cidx_dest] = self.prepareStereoRectificationMaps(cidx_src, cidx_dest)
+            edge["A"][cidx_dest], baseline = self.prepareStereoRectificationMaps(cidx_src, cidx_dest)
                 
         #register the callback for the synchronized images
         sync_sub = message_filters.TimeSynchronizer([val.image_sub for val in self.monovalidators],1)
@@ -105,6 +105,16 @@ class CameraChainValidator(object):
 
         #initialize message throttler
         self.timeLast = 0
+
+        self.stereo = cv2.StereoBM_create(numDisparities=16, blockSize=15)
+        self.roi = []
+        self.is_roiselected = False
+        focal_length = edge["A"][cidx_src][0,0] # Assume only 2 (overlapped) cameras as 1 stereo set.
+        self.fb = focal_length * baseline
+        print("focal length={}[pix]".format(focal_length))
+        print("baseline={}[m]".format(baseline))
+        self.mindepth = 0.01 # ignore smaller depth than this. [m]
+        self.maxdepth = 100 # ignore larger depth than this. [m]
 
     def synchronizedCallback(self, *cam_msgs):
         #throttle image processing
@@ -143,15 +153,24 @@ class CameraChainValidator(object):
             else:
                 validator.undist_image = validator.undistorter.undistortImage(np_image)
                             
-            #generate a mono view for each cam
-            validator.generateMonoview(np_image, observation, success)            
+            # #generate a mono view for each cam
+            # validator.generateMonoview(np_image, observation, success)
             
         #generate all rectification views
         for edge in self.G.es:
             cidx_src = edge.source
             cidx_dest = edge.target
-            self.generatePairView(cidx_src, cidx_dest)
-                
+            rectimgA, rectimgB = self.generatePairView(cidx_src, cidx_dest) #extract final
+
+        # cv2.imwrite("rectimgA.png", rectimgA)
+        # cv2.imwrite("rectimgB.png", rectimgB)
+
+        if self.is_roiselected:
+            self.estimateDepth(rectimgA, rectimgB)
+        else:
+            self.roi = cv2.selectROI(rectimgA)
+            self.is_roiselected = True
+
         cv2.waitKey(1)
     
     #returns transformation T_to_from
@@ -187,7 +206,7 @@ class CameraChainValidator(object):
         #combine the images    
         np_rect_image = np.hstack( (rect_image_A, rect_image_B) )
         
-        return np_rect_image
+        return np_rect_image, rect_image_A, rect_image_B
 
     def generatePairView(self, camAnr, camBnr):
         #prepare the window
@@ -248,19 +267,19 @@ class CameraChainValidator(object):
         edge = self.G.es[edge_idx]
         A_rect = edge["A"][camAnr] #some for cam B
         
-        np_image_rect = self.rectifyImages(camA.undist_image, 
+        np_image_rect, rectimgA, rectimgB = self.rectifyImages(camA.undist_image,
                                            edge["rect_map"][camAnr], 
                                            camB.undist_image, 
                                            edge["rect_map"][camBnr])
-        
+
         #draw some epilines
         np_image_rect = cv2.cvtColor(np_image_rect, cv2.COLOR_GRAY2BGR)
         n=10
         for i in range(0,n):
             y = np_image_rect.shape[0]*i/n
             cv2.line(np_image_rect, (0,y), (2*np_image_rect.shape[1],y),(0,255,0));
-    
-    
+
+
         if len(common_ids) > 0:
             #draw error statistics
             reproj_L2_errs = np.sum(np.abs(reproj_errs)**2, axis=-2)**(1./2)
@@ -278,24 +297,25 @@ class CameraChainValidator(object):
                            ( "std_L2:  ", np.std(reproj_L2_errs) ),
                            ( "max_L2:  ", np.max(reproj_L2_errs) ),
                            ( "min_L2:  ", np.min(reproj_L2_errs) )      ]
-    
+
             #print the text
             y = 20; x = 20
             for err_txt, err_val in outputList:
                 fontScale = 0.75
                 y += int(42*fontScale)
-                 
+
                 if err_txt == "":
                     continue
-                 
+
                 cv2.putText(np_image_rect, err_txt, (x,y), cv2.FONT_HERSHEY_SIMPLEX, fontScale=fontScale, color=(0, 0, 255), thickness=2)
                 cv2.putText(np_image_rect, "{0: .4f}".format(err_val), (x+100,y), cv2.FONT_HERSHEY_SIMPLEX, fontScale=fontScale, color=(0, 0, 255), thickness=2)
         else:
- 
+
             cv2.putText(np_image_rect, "Detection failed...", (np_image_rect.shape[0]/2,np_image_rect.shape[1]/5), cv2.FONT_HERSHEY_SIMPLEX, fontScale=2, color=(0, 0, 255), thickness=3)
-            
+
         cv2.imshow(windowName, np_image_rect)
-    
+
+        return rectimgA, rectimgB
     
     def prepareStereoRectificationMaps(self, camAnr, camBnr):        
         #get the camera parameters for the undistorted cameras
@@ -307,7 +327,8 @@ class CameraChainValidator(object):
         
         #get the baseline between the cams       
         baseline_BA = self.getTransformationCamFromTo(camAnr, camBnr)
-        
+        baseline = np.linalg.norm(baseline_BA.t())
+
         ##
         #A.Fusiello, E. Trucco, A. Verri: A compact algorithm for recification of stereo pairs, 1999
         ##
@@ -346,7 +367,6 @@ class CameraChainValidator(object):
         Ra = R #camA=world, then to rectified coords
         Rb = R * baseline_BA.inverse().C() #to world then to rectified coords
         
-        
         #create the rectification maps
         rect_map_x_a, rect_map_y_a = cv2.initUndistortRectifyMap(camIdealA, 
                                                                  np.zeros((4,1)), 
@@ -362,9 +382,29 @@ class CameraChainValidator(object):
                                                                  imageSize,
                                                                  cv2.CV_16SC2)
         
-        return (rect_map_x_a, rect_map_y_a), (rect_map_x_b, rect_map_y_b), Ra, Rb, A, A
-    
-        
+        return (rect_map_x_a, rect_map_y_a), (rect_map_x_b, rect_map_y_b), Ra, Rb, A, A, baseline
+
+    def estimateDepth(self, imageA, imageB): # default assumes 2:1:2 center of 1280x800 image.
+        # compute disparity
+        disparity = self.stereo.compute(imageA, imageB)
+        disparity = disparity.astype(np.float32) / 16.0 # opencv outputs disparity floqt16 and multiply 16.
+        # disparity = disparity.astype(np.float32)
+        # crop disparity
+        disparity = disparity[int(self.roi[1]):int(self.roi[1] + self.roi[3]),
+                       int(self.roi[0]):int(self.roi[0] + self.roi[2])]
+
+        # compute depth
+        depth = self.fb / disparity
+
+        # remove errors
+        depth[np.where(depth < self.mindepth)] = np.nan
+        depth[np.where(depth > self.maxdepth)] = np.nan
+
+        # display
+        print("mean depth in the ROI={}[m]".format(np.nanmean(depth)))
+        cv2.imshow("depth", depth)
+
+
 class MonoCameraValidator(object):
     def __init__(self, camConfig, targetParams):
         
@@ -378,7 +418,6 @@ class MonoCameraValidator(object):
         
         self.topic = camConfig.getRosTopic()
         self.windowName = "Camera: {0}".format(self.topic)
-        # cv2.namedWindow(self.windowName, 1)
     
         #register the cam topic to the message synchronizer
         self.image_sub = message_filters.Subscriber(self.topic, Image)
@@ -458,7 +497,7 @@ class MonoCameraValidator(object):
 
 
 if __name__ == "__main__":        
-    parser = argparse.ArgumentParser(description='Validate the intrinsics of a camera.')
+    parser = argparse.ArgumentParser(description='Validate the intrinsics and extrinsic of a camera.')
     parser.add_argument('--target', dest='targetYaml', help='Calibration target configuration as yaml file', required=True)
     parser.add_argument('--cam', dest='chainYaml', help='Camera configuration as yaml file', required=True)
     parser.add_argument('--verbose', action='store_true', dest='verbose', help='Verbose output')
